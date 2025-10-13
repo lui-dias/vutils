@@ -266,8 +266,10 @@ fn (mut e Execute) run() {
 fn (mut e Execute) wait() u32 {
 	exit_code := u32(0)
 
-	println(C.WaitForSingleObject(e.pi.h_process, C.INFINITE))
+	C.WaitForSingleObject(e.pi.h_process, C.INFINITE)
 
+	// TODO: Wait for the subprocess's children to end, instead of waiting only for the subprocess to end
+	//
 	// for {
 	// 	mut message := u32(0)
 	// 	mut completion_key := usize(0)
