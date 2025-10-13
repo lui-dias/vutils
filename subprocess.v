@@ -1,5 +1,10 @@
 module main
 
+
+$if windows {
+	$compile_error('Subprocess only works on Windows')
+}
+
 import strings
 
 #include <fcntl.h>
