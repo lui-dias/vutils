@@ -23,6 +23,7 @@ mut:
 	running     bool = true
 	widgets_map map[string]string
 	start_time  time.Time
+	ended       bool
 }
 
 fn (mut pb ProgressBar) start() {
@@ -39,6 +40,13 @@ fn (mut pb ProgressBar) start() {
 	}
 
 	pb.render()
+	pb.ended = true
+}
+
+fn (mut pb ProgressBar) wait() {
+	for !pb.ended {
+		time.sleep(0.01)
+	}
 }
 
 fn (mut pb ProgressBar) render() {
