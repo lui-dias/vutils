@@ -2,13 +2,9 @@
 
 Single-file libraries I'd like for V
 
-NOTE: It have bugs and missing features
+> NOTE: may have bugs and have missing features
 
-### How to Use
-
-Ctrl+C + Ctrl+V
-
-### Progressbar and Subprocess example
+## Progressbar and Subprocess example
 
 ```v
 module main
