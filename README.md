@@ -76,9 +76,7 @@ fn main() {
 		}
 	}
 
-	pb.current = frames_count
-	pb.running = false
-	pb.wait()
+	pb.finish()
 }
 ```
 ![progressbar and subprocess example](assets/progressbar-subprocess.png)

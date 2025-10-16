@@ -43,7 +43,10 @@ fn (mut pb ProgressBar) start() {
 	pb.ended = true
 }
 
-fn (mut pb ProgressBar) wait() {
+fn (mut pb ProgressBar) finish() {
+	pb.current = pb.total
+	pb.running = false
+
 	for !pb.ended {
 		time.sleep(0.01)
 	}
