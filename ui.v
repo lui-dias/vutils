@@ -1,6 +1,7 @@
 import gg
 import math { floor, round }
 import arrays
+import strings
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //                 Enums
@@ -15,6 +16,12 @@ enum Sizing as u8 {
 enum Direction as u8 {
 	vertical
 	horizontal
+}
+
+enum TextWrap as u8 {
+	no_wrap
+	wrap_by_space
+	wrap_by_newline
 }
 
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -40,6 +47,20 @@ struct Color {
 	b u8
 	a u8 = 255
 }
+
+struct Text {
+	content      string
+	wrap         TextWrap = .wrap_by_space
+	line_spacing int      = 4
+	size         int      = 16
+	color        Color    = Color.from_hex(0x000000)
+mut:
+	internal__rendered_text_lines []string
+}
+
+// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
+//                 Methods
+// =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 
 fn Padding.horizontal(n int) Padding {
 	return Padding{
@@ -153,6 +174,13 @@ fn hue_to_rgb(p f64, q f64, tt f64) f64 {
 	return p
 }
 
+fn (t Text) to_gg_text_cfg() gg.TextCfg {
+	return gg.TextCfg{
+		color: t.color.to_gg()
+		size:  t.size
+	}
+}
+
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
 //                 UI
 // =-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=
@@ -170,7 +198,8 @@ mut:
 	y        int
 	w        int
 	h        int
-	children []&Element
+	parent   &Element = unsafe { nil }
+	children []Element
 
 	sizing_w  Sizing    = .fit
 	sizing_h  Sizing    = .fit
@@ -181,70 +210,20 @@ mut:
 	background Color
 	border     &Border = unsafe { nil }
 	radius     int
+
+	text &Text = unsafe { nil }
 }
 
-fn frame_fn(mut state State) {
-	state.ctx.begin()
-	render(state.ctx, state.e)
-	state.ctx.end()
-	// exit(0)
-}
+fn layout_add_parent(mut e Element) {
+	for mut c in e.children {
+		c.parent = e
 
-fn render(ctx gg.Context, e &Element) {
-	println('${e.name} ${e.x}, ${e.y}, ${e.w}, ${e.h}')
-
-	border := if e.border == unsafe { nil } { &Border{} } else { e.border }
-
-	// Draw rect
-	ctx.draw_rect(
-		x:          e.x + border.padding.left
-		y:          e.y + border.padding.top
-		w:          e.w - border.padding.right * 2
-		h:          e.h - border.padding.bottom * 2
-		is_rounded: e.radius > 0
-		radius:     e.radius
-		style:      .fill
-		color:      e.background.to_gg()
-	)
-
-	// Then border
-	if e.border != unsafe { nil } {
-		ctx.draw_rect(
-			x:          e.x
-			y:          e.y
-			w:          e.w
-			h:          e.h
-			is_rounded: e.border.radius > 0
-			radius:     e.border.radius
-			style:      .stroke
-			color:      e.border.color.to_gg()
-		)
+		layout_add_parent(mut c)
 	}
-
-	for c in e.children {
-		render(ctx, c)
-	}
-}
-
-fn layout(mut e &Element) {
-	layout_adjust_sizing(mut e)
-
-	// It define or need the value of a child
-	// if it doesn't have children, it's unnecessary to run
-	if e.children.len > 0 {
-		layout_size(mut e)
-		layout_fill_size(mut e)
-	}
-
-	if e.border != unsafe { nil } {
-		layout_border(mut e)
-	}
-
-	layout_positions(mut e, 0, 0)
 }
 
 // Set sizing to .fixed if w or h was defined
-fn layout_adjust_sizing(mut e &Element) {
+fn layout_adjust_sizing(mut e Element) {
 	if e.w > 0 {
 		e.sizing_w = .fixed
 	}
@@ -259,7 +238,7 @@ fn layout_adjust_sizing(mut e &Element) {
 
 // Set size of parent with the size of fixed children
 // Solves FIT sizing
-fn layout_size(mut e &Element) {
+fn layout_size(mut e Element) {
 	mut ws := []int{}
 	mut hs := []int{}
 
@@ -289,7 +268,7 @@ fn layout_size(mut e &Element) {
 }
 
 // Solves FILL sizing
-fn layout_fill_size(mut e &Element) {
+fn layout_fill_size(mut e Element) {
 	spacing := int_max(0, e.children.len - 1) * e.spacing
 
 	mut remaining_w := e.w - e.padding.width() - spacing
@@ -306,8 +285,6 @@ fn layout_fill_size(mut e &Element) {
 			idx_children_with_fill_h << i
 		}
 	}
-
-	println('${e.name} ${e.w} ${e.h} ${remaining_h}')
 
 	for c in e.children {
 		if e.direction == .horizontal && c.sizing_w == .fixed {
@@ -330,7 +307,7 @@ fn layout_fill_size(mut e &Element) {
 	}
 }
 
-fn layout_border(mut e &Element) {
+fn layout_border(mut e Element) {
 	e.w -= e.border.width()
 	e.h -= e.border.height()
 
@@ -339,7 +316,51 @@ fn layout_border(mut e &Element) {
 	}
 }
 
-fn layout_positions(mut e &Element, offset_x int, offset_y int) {
+fn layout_text_wrap(mut e Element, ctx gg.Context) {
+	if !isnil(e.text) {
+		if e.text.wrap == .wrap_by_space {
+			ctx.set_text_cfg(e.text.to_gg_text_cfg())
+			mut space_left := e.parent.w
+
+			tokens := e.text.content.split(if e.text.wrap == .wrap_by_space { ' ' } else { '\n' })
+			space_width := ctx.text_width(' ')
+
+			mut sb := strings.new_builder(512)
+
+			for t in tokens {
+				if t == '\n' {
+					sb.write_string('\n')
+					space_left = e.parent.w
+
+					continue
+				}
+
+				word_width := ctx.text_width(t)
+				space_left -= word_width + space_width
+
+				if space_left <= 0 {
+					sb.go_back(1)
+					sb.write_string('\n')
+					space_left = e.parent.w - word_width - space_width
+				}
+
+				sb.write_string(t + ' ')
+			}
+
+			e.text.internal__rendered_text_lines = sb.str().trim_space().split_into_lines()
+		} else if e.text.wrap == .wrap_by_newline {
+			e.text.internal__rendered_text_lines = e.text.content.split_into_lines()
+		} else {
+			e.text.internal__rendered_text_lines = [e.text.content]
+		}
+	}
+
+	for mut c in e.children {
+		layout_text_wrap(mut c, ctx)
+	}
+}
+
+fn layout_positions(mut e Element, offset_x int, offset_y int) {
 	e.x = offset_x
 	e.y = offset_y
 
@@ -357,16 +378,91 @@ fn layout_positions(mut e &Element, offset_x int, offset_y int) {
 	}
 }
 
+fn layout(mut e Element, ctx gg.Context) {
+	layout_add_parent(mut e)
+	layout_adjust_sizing(mut e)
+
+	// It define or need the value of a child
+	// if it doesn't have children, it's unnecessary to run
+	if e.children.len > 0 {
+		layout_size(mut e)
+		layout_fill_size(mut e)
+	}
+
+	if !isnil(e.border) {
+		layout_border(mut e)
+	}
+
+	layout_positions(mut e, 0, 0)
+	layout_text_wrap(mut e, ctx)
+	// exit(0)
+}
+
+fn render(ctx gg.Context, e Element) {
+	// println('${e.name} ${e.x}, ${e.y}, ${e.w}, ${e.h}')
+
+	border := if isnil(e.border) { &Border{} } else { e.border }
+
+	ctx.draw_rect(
+		x:          e.x + border.padding.left
+		y:          e.y + border.padding.top
+		w:          e.w - border.padding.right * 2
+		h:          e.h - border.padding.bottom * 2
+		is_rounded: e.radius > 0
+		radius:     e.radius
+		style:      .fill
+		color:      e.background.to_gg()
+	)
+
+	if !isnil(e.border) {
+		ctx.draw_rect(
+			x:          e.x
+			y:          e.y
+			w:          e.w
+			h:          e.h
+			is_rounded: e.border.radius > 0
+			radius:     e.border.radius
+			style:      .stroke
+			color:      e.border.color.to_gg()
+		)
+	}
+
+	if !isnil(e.text) {
+		mut i := 0
+
+		for line in e.text.internal__rendered_text_lines {
+			ctx.draw_text(e.x, e.y + i, line, e.text.to_gg_text_cfg())
+			i += e.text.line_spacing + ctx.text_height(line)
+		}
+	}
+
+	if !isnil(e.children) {
+		for c in e.children {
+			render(ctx, c)
+		}
+	}
+}
+
+fn frame_fn(mut state State) {
+	state.ctx.begin()
+	render(state.ctx, state.e)
+	state.ctx.end()
+}
+
+fn init_fn(mut s State) {
+	layout(mut s.e, s.ctx)
+}
+
 fn main() {
 	mut state := &State{}
 
-	mut e := &Element{
+	mut e := Element{
 		name:       'a'
 		w:          800
 		h:          600
 		background: Color.from_hex(0x181818)
 		children:   [
-			&Element{
+			Element{
 				name:       'b'
 				background: Color.from_hex(0x634747)
 				sizing_w:   .fill
@@ -380,14 +476,14 @@ fn main() {
 				}
 				spacing:    20
 				children:   [
-					&Element{
+					Element{
 						name:       'c'
 						background: Color.from_hex(0xff0000)
 						children:   []
 						w:          50
 						h:          150
 					},
-					&Element{
+					Element{
 						name:       'd'
 						background: Color.from_hex(0xd845ca)
 						children:   []
@@ -398,11 +494,21 @@ fn main() {
 							color:   Color.from_hex(0x2da86c)
 						}
 					},
-					&Element{
+					Element{
 						name:       'e'
 						background: Color.from_hex(0x4882ba)
-						children:   []
-						w:          100
+						children:   [
+							Element{
+								name:     'f'
+								text:     &Text{
+									content: 'Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua'
+									color:   Color.from_hex(0xff0000)
+									size:    32
+								}
+								children: []
+							},
+						]
+						w:          200
 						sizing_h:   .fill
 					},
 				]
@@ -410,17 +516,17 @@ fn main() {
 		]
 	}
 
-	state.e = e
+	state.e = &e
 	state.ctx = gg.new_context(
 		bg_color:     gg.rgb(174, 198, 255)
 		width:        800
 		height:       600
 		window_title: 'Polygons'
-		frame_fn:     frame_fn
 		user_data:    state
+		frame_fn:     frame_fn
+		init_fn:      init_fn
 	)
 
-	layout(mut &e)
 	state.ctx.run()
 
 	// println('================')
